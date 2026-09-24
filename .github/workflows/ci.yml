@@ -41,11 +41,20 @@ jobs:
   cdk-synth:
     # Mirrors the real pipeline's "cdk synth" validation stage: exercises the
     # infrastructure-as-code without needing real AWS credentials or an
-    # account to deploy into.
+    # account to deploy into. The MariaDB values below are placeholders --
+    # DatabaseUriBuilder.ts intentionally requires them to be present (never
+    # baked into source) but their content is never used to reach a real
+    # database.
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: infra/cdk
+    env:
+      CDK_MARIADB_SERVER: training-db.example.internal
+      CDK_MARIADB_PORT: "3306"
+      CDK_MARIADB_DATABASE: training_guidelines
+      CDK_MARIADB_USERNAME: training_app_user
+      CDK_MARIADB_PASSWORD: placeholder-not-a-real-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
