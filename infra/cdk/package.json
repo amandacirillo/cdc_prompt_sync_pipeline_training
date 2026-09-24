@@ -1,0 +1,19 @@
+{
+  "name": "cdc-prompt-sync-pipeline-training-infra",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --require-approval=never"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.160.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.160.0",
+    "constructs": "^10.3.0"
+  }
+}

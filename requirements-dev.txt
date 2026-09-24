@@ -1,0 +1,8 @@
+pytest
+flake8
+mypy
+boto3
+pymysql
+langfuse
+debugpy
+types-pymysql

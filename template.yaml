@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+# Local-dev SAM template for the CDC -> prompt-sync pipeline. Every function
+# points at a local emulator endpoint (dynamodb-local / kinesalite /
+# elasticmq) via environment variables so `sam local` + docker-compose
+# reproduces the same event shapes the real CDK-deployed stack (infra/cdk/)
+# would produce from DMS + a real DynamoDB table -- see README.md.
+
+Globals:
+  Function:
+    Runtime: python3.12
+
+Resources:
+  # DynamoDB doubles as a durable "trigger bus": producers write a
+  # short-TTL item, and its *expiry-driven delete* (not the write) is what
+  # carries the payload downstream via a DynamoDB Streams REMOVE event. Most
+  # local DynamoDB emulators don't enforce TTL, so TtlCleanupFunction sweeps
+  # expired items itself in local dev; in AWS, native TTL expiry does this
+  # for free (see infra/cdk).
+  GuidelineTrackingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tableName
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tableName
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: OLD_AND_NEW_IMAGES
+
+  TtlCleanupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dynamodb_ttl_cleanup/
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Timeout: 30
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDBTableName
+          DYNAMODB_ENDPOINT: !Ref DynamoDBEndpoint
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+
+  DynamoDBStreamProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dynamodb_handler/
+      Handler: dynamodb_processor.lambda_handler
+      Timeout: 60
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref SupportQueue
+          SQS_ENDPOINT: !Ref SQSEndpoint
+          MARIADB_HOST: !Ref MariaDBHost
+          MARIADB_PORT: !Ref MariaDBPort
+          MARIADB_DATABASE: !Ref MariaDBDatabase
+          MARIADB_USER: !Ref MariaDBUser
+          MARIADB_PASSWORD: !Ref MariaDBPassword
+          DEBUG_MODE: true
+          DEBUG_PORT: 5890
+          PYDEVD_DISABLE_FILE_VALIDATION: 1
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt GuidelineTrackingTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["REMOVE"]}'  # only sentinel-expiry deletes carry a payload
+    Metadata:
+      DockerContext: ./dynamodb_handler
+      Dockerfile: Dockerfile.dev  # local development only
+
+  SupportQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref SQSQueueName
+      VisibilityTimeoutSeconds: 300
+
+  SQSProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: sqs_processor/
+      Handler: sqs_processor.lambda_handler
+      Timeout: 300
+      Environment:
+        Variables:
+          LANGFUSE_SECRET_KEY: !Ref LangfuseSecretKey
+          LANGFUSE_PUBLIC_KEY: !Ref LangfusePublicKey
+          LANGFUSE_HOST: !Ref LangfuseHost
+          DEBUG_MODE: true
+          DEBUG_PORT: 5891
+          PYDEVD_DISABLE_FILE_VALIDATION: 1
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SupportQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+    Metadata:
+      DockerContext: ./sqs_processor
+      Dockerfile: Dockerfile.dev  # local development only
+
+  # Bridges CDC records from a Kinesis stream (in AWS: a DMS target) into the
+  # exact same DynamoDB-Streams-shaped REMOVE event DynamoDBStreamProcessor
+  # already handles, so the same downstream logic serves both trigger paths.
+  CdcKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+
+  KinesisBridgeProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: kinesis_handler/
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Environment:
+        Variables:
+          TARGET_LAMBDA_NAME: !Ref DynamoDBStreamProcessor
+      Events:
+        KinesisEvent:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt CdcKinesisStream.Arn
+            StartingPosition: LATEST
+            BatchSize: 10
+
+Parameters:
+  LangfuseSecretKey:
+    Type: String
+    NoEcho: true
+    Description: Langfuse secret key
+  LangfusePublicKey:
+    Type: String
+    Description: Langfuse public key
+  LangfuseHost:
+    Type: String
+    Description: Langfuse host
+
+  DynamoDBTableName:
+    Type: String
+    Description: DynamoDB trigger-bus table name
+    Default: support-guideline-tracking-table
+  DynamoDBEndpoint:
+    Type: String
+    Description: DynamoDB endpoint (local development)
+    Default: http://dynamodb-local:8000
+  SQSQueueName:
+    Type: String
+    Description: SQS queue name
+    Default: support-processing-queue
+  SQSEndpoint:
+    Type: String
+    Description: SQS endpoint (local development)
+    Default: http://sqs:9324
+  MariaDBHost:
+    Type: String
+    Default: localhost
+  MariaDBPort:
+    Type: String
+    Default: "3306"
+  MariaDBDatabase:
+    Type: String
+    Default: testdb
+  MariaDBUser:
+    Type: String
+    Default: root
+  MariaDBPassword:
+    Type: String
+    NoEcho: true
+    Default: password

@@ -1,0 +1,12 @@
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY requirements.txt ${LAMBDA_TASK_ROOT}
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . ${LAMBDA_TASK_ROOT}
+
+# Local development only: exposes a debugpy port so you can attach a real
+# debugger to this Lambda while it runs inside `sam local`/docker-compose.
+EXPOSE 5891
+
+CMD ["sqs_processor.lambda_handler"]

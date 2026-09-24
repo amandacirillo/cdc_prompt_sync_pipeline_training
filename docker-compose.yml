@@ -1,0 +1,50 @@
+networks:
+  lambda-network:
+    name: lambda-network
+    driver: bridge
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    volumes:
+      - ./dynamodb_data:/data
+    networks:
+      - lambda-network
+
+  kinesalite:
+    image: instructure/kinesalite:latest
+    container_name: kinesalite
+    ports:
+      - "4567:4567"
+    environment:
+      - KINESALITE_PORT=4567
+    networks:
+      - lambda-network
+
+  sqs:
+    image: softwaremill/elasticmq:latest
+    container_name: sqs-local
+    ports:
+      - "9324:9324"
+      - "9325:9325"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+    networks:
+      - lambda-network
+
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb-local
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: testdb
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - lambda-network
