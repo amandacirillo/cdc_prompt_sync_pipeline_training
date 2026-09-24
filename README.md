@@ -1,5 +1,7 @@
 # CDC Prompt Sync Pipeline Training
 
+> **Note:** This is a from-scratch recreation of an architectural pattern I built at my employer, not the original production code -- rebuilt with a fabricated/generic domain and no proprietary business logic, credentials, or internal resource identifiers.
+
 A training-only reconstruction of a change-data-capture (CDC) pipeline that
 keeps an LLM prompt-management SaaS (Langfuse) in sync with a relational
 database, without the application ever writing to Langfuse directly. It is
